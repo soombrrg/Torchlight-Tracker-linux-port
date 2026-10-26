@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "./run-linux.sh"
+    "start": "./run-linux.sh",
+    "build:linux": "python3 build-release.py",
+    "release:github": "./publish-release.sh"
   }
 }

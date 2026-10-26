@@ -8,41 +8,39 @@ tracker_target="${tracker_applications}/torchlight-tracker.desktop"
 tracker_temporary="$(mktemp -d)"
 trap 'rm -rf -- "$tracker_temporary"' EXIT
 
-# Resolve paths at installation time so this also works after moving the port.
-python3 - "$tracker_root" "$tracker_temporary/torchlight-tracker.desktop" <<'PY'
-import pathlib
-import sys
+# Generate host-specific paths locally; only Bash and coreutils are required.
+tracker_launcher="${tracker_root}/run-linux.sh"
+[[ -x "${tracker_root}/Torchlight-Tracker" ]] && tracker_launcher="${tracker_root}/Torchlight-Tracker"
+tracker_icon="${tracker_root}/linux/app/etor.png"
+[[ -f "${tracker_root}/resources/etor.png" ]] && tracker_icon="${tracker_root}/resources/etor.png"
 
-root = pathlib.Path(sys.argv[1])
+desktop_value() {
+  local tracker_value="$1"
+  tracker_value="${tracker_value//\\/\\\\}"
+  tracker_value="${tracker_value//$'\n'/\\n}"
+  tracker_value="${tracker_value//$'\r'/\\r}"
+  tracker_value="${tracker_value//$'\t'/\\t}"
+  printf '%s' "$tracker_value"
+}
 
-def value(text):
-    return str(text).replace('\\', '\\\\').replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+desktop_executable() {
+  local tracker_value="${1//%/%%}"
+  tracker_value="${tracker_value//\\/\\\\}"
+  tracker_value="${tracker_value//\"/\\\"}"
+  tracker_value="${tracker_value//\`/\\\`}"
+  tracker_value="${tracker_value//\$/\\\$}"
+  desktop_value "\"${tracker_value}\""
+}
 
-def executable(text):
-    escaped = str(text).replace('%', '%%')
-    for char in ('\\', '"', '`', '$'):
-        escaped = escaped.replace(char, '\\' + char)
-    return value('"' + escaped + '"')
-
-entry = '\n'.join([
-    '[Desktop Entry]',
-    'Version=1.0',
-    'Type=Application',
-    'Name=Torchlight Tracker',
-    'Comment=Farming and loot tracker for Torchlight: Infinite',
-    'Exec=' + executable(root / 'run-linux.sh'),
-    'Path=' + value(root),
-    'Icon=' + value(root / 'linux/app/etor.png'),
-    'Terminal=false',
-    'Categories=Game;',
-    'Keywords=Torchlight;Infinite;TLI;Tracker;ETor;трекер;',
-    'StartupNotify=true',
-    'StartupWMClass=etor-linux',
-    'X-Torchlight-Tracker-Port=true',
-    '',
-])
-pathlib.Path(sys.argv[2]).write_text(entry, encoding='utf-8')
-PY
+{
+  printf '%s\n' '[Desktop Entry]' 'Version=1.0' 'Type=Application' 'Name=Torchlight Tracker'
+  printf '%s\n' 'Comment=Farming and loot tracker for Torchlight: Infinite'
+  printf 'Exec=%s\n' "$(desktop_executable "$tracker_launcher")"
+  printf 'Path=%s\n' "$(desktop_value "$tracker_root")"
+  printf 'Icon=%s\n' "$(desktop_value "$tracker_icon")"
+  printf '%s\n' 'Terminal=false' 'Categories=Game;' 'Keywords=Torchlight;Infinite;TLI;Tracker;ETor;трекер;'
+  printf '%s\n' 'StartupNotify=true' 'StartupWMClass=etor-linux' 'X-Torchlight-Tracker-Port=true'
+} > "$tracker_temporary/torchlight-tracker.desktop"
 
 if command -v desktop-file-validate >/dev/null 2>&1; then
   desktop-file-validate "$tracker_temporary/torchlight-tracker.desktop"

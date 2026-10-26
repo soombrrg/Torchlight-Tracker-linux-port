@@ -21,9 +21,21 @@ The original application loads its interface from the author's website, and this
 | [`linux/app/translate.js`](linux/app/translate.js), [`translations.json`](linux/app/translations.json) | Original English translation script and dictionary |
 | [`run-linux.sh`](run-linux.sh), [`install-desktop.sh`](install-desktop.sh) | Native startup and desktop-menu installation |
 
-## Run
+## Ready-to-run Linux release
 
-A system Linux Electron runtime is required; it is not bundled. The launcher recognizes `electron43` through `electron32`, and `electron`. Set `TLI_ELECTRON` to select a specific executable. No `npm install` is needed. Wine is not required for the tracker; the game can continue to use Proton.
+Download `Torchlight-Tracker-linux-port-v0.1.0-arch-x64.tar.gz` from [this project's Releases](https://github.com/soombrrg/Torchlight-Tracker-linux-port/releases). Extract the entire directory and run:
+
+```bash
+./Torchlight-Tracker
+```
+
+The release contains Electron 43.7.11, the application's `app.asar`, native runtime libraries, icon and desktop installer. Electron, Node.js, npm and Python do not need to be installed separately. Run `./install-desktop.sh` once to add **Torchlight Tracker** to the desktop menu.
+
+This build targets current **Arch Linux / Omarchy, x86_64, glibc 2.44+**. Other distributions are not compatibility-tested. A graphical desktop and unprivileged user namespaces are required; the Chromium sandbox stays enabled. The original author's online UI remains an external dependency.
+
+## Run from source
+
+A system Linux Electron runtime is required when running from source. The launcher recognizes `electron43` through `electron32`, and `electron`. Set `TLI_ELECTRON` to select a specific executable. No `npm install` is needed. Wine is not required for the tracker; the game can continue to use Proton.
 
 ```bash
 ./run-linux.sh
@@ -39,7 +51,7 @@ You can also use **Ctrl+O** in the application. The web interface can restart co
 
 ## Desktop menu
 
-The installer requires Python 3:
+The installer uses Bash and standard Linux utilities:
 
 ```bash
 ./install-desktop.sh
@@ -68,6 +80,24 @@ The game installation, configuration and process are not modified.
 | `TLI_USER_DATA_DIR` | Application-data directory; defaults to Electron user data for `etor-linux` |
 | `TLI_OZONE_PLATFORM` | `x11` by default for XWayland; `wayland` selects native Wayland |
 | `TLI_DEBUG=1` | Diagnostic output; does not replay old log entries |
+
+## Build and publish a Linux release
+
+On Arch Linux with Python 3.11+, `ldd`, `readelf` and a Linux Electron runtime available:
+
+```bash
+python3 build-release.py
+```
+
+The builder uses `/usr/lib/electron43` by default. Override it with `--electron-dir /path/to/electron`, or select an output location with `--output-dir /path/to/output`. It creates a complete distribution and `.tar.gz` with a SHA-256 file under `dist/releases/`. Build outputs, tests and internal research are excluded from Git.
+
+To push the source and create a GitHub prerelease with both assets:
+
+```bash
+./publish-release.sh
+```
+
+Publishing requires authenticated `gh`, Git access, and a clean committed source tree. The build version comes from the root `package.json`; the original backend version stays unchanged for upstream API compatibility.
 
 ## Privacy and limitations
 

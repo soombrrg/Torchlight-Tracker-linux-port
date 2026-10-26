@@ -17,6 +17,8 @@
 /.local/
 /linux/torchlight-tracker.desktop
 node_modules/
+__pycache__/
+*.py[cod]
 *.log
 *.log.*
 *.core
