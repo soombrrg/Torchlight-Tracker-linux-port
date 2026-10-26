@@ -1,68 +1,81 @@
-# Torchlight Tracker
+# Torchlight Tracker — Linux port
 
-Experimental native Linux adaptation of **YiHuo ETor**, based on [Giboork's English translation](https://github.com/Giboork/TLI-tracker-translated), release v1.3.0. This is an independent, unofficial project, separate from the upstream GitHub fork network.
+Experimental native Linux adaptation of **YiHuo ETor**, based on [Giboork's English translation](https://github.com/Giboork/TLI-tracker-translated), release v1.3.0. This is an independent, unofficial project.
 
-The original interface, game-message parser, translations and calculations are preserved. The interface still loads from the original author's website, so an internet connection and that service are required.
+## What is included
 
-## Run on Linux
+**The application code is in [`linux/app/`](linux/app/).** This repository contains the Linux Electron backend, native file handling, preload bridge, translations and icon.
 
-Requirements: a system Linux Electron runtime and read access to the Torchlight: Infinite log. The launcher recognizes `electron43` through `electron32`, and `electron`. Set `TLI_ELECTRON` to use a specific executable. Wine is not required for the tracker; the game may continue to run through Proton.
+The original application loads its interface from the author's website, and this port preserves that architecture. The hosted frontend, its game-message parser/worker and calculations are loaded at runtime; they are not bundled in this repository. The program requires the author's service and an internet connection.
+
+| File | Purpose |
+| --- | --- |
+| [`linux/app/main.js`](linux/app/main.js) | Application entry point, windows, native actions and log delivery |
+| [`linux/app/preload.js`](linux/app/preload.js) | Bridge between the interface and native application |
+| [`linux/app/log-reader.js`](linux/app/log-reader.js) | Read-only incremental game-log collection |
+| [`linux/app/linux-paths.js`](linux/app/linux-paths.js) | Steam library and game-log discovery |
+| [`linux/app/renderer-compat.js`](linux/app/renderer-compat.js) | Compatibility adjustment for the original desktop log-path getter |
+| [`linux/app/security.js`](linux/app/security.js) | IPC authorization and window navigation policy |
+| [`linux/app/safe-temp.js`](linux/app/safe-temp.js) | Private temporary exports |
+| [`linux/app/window-options.js`](linux/app/window-options.js) | Window-bounds validation |
+| [`linux/app/translate.js`](linux/app/translate.js), [`translations.json`](linux/app/translations.json) | Original English translation script and dictionary |
+| [`run-linux.sh`](run-linux.sh), [`install-desktop.sh`](install-desktop.sh) | Native startup and desktop-menu installation |
+
+## Run
+
+A system Linux Electron runtime is required; it is not bundled. The launcher recognizes `electron43` through `electron32`, and `electron`. Set `TLI_ELECTRON` to select a specific executable. No `npm install` is needed. Wine is not required for the tracker; the game can continue to use Proton.
 
 ```bash
 ./run-linux.sh
 ```
 
-Steam libraries are discovered automatically, including additional library locations and Flatpak Steam. To select a log manually:
+Steam libraries are detected automatically, including additional library locations and Flatpak Steam. To select a log manually:
 
 ```bash
 ./run-linux.sh --log '/path/to/UE_game.log'
 ```
 
-You can also select a log with **Ctrl+O**. No `npm install` is needed; the application uses Electron and Node's built-in modules.
+You can also use **Ctrl+O** in the application. The web interface can restart collection for a native-selected path; changing the path requires Steam discovery, `--log`/`TLI_LOG_PATH`, or **Ctrl+O**.
 
-## Desktop launcher
+## Desktop menu
+
+The installer requires Python 3:
 
 ```bash
 ./install-desktop.sh
 ```
 
-On Omarchy, press **Super+Space** and search for **Torchlight Tracker**. The installer requires Python 3; it uses the application icon and creates a launcher that opens without a terminal. Installation is per-user and requires no `sudo`. Paths are resolved locally during installation; rerun the installer if you move the project folder.
+On Omarchy, press **Super+Space** and search for **Torchlight Tracker**. The launcher uses the application icon and opens without a terminal. Installation is per-user, without `sudo`. Paths are generated locally; rerun the installer if you move the project folder.
 
-## Linux changes
+## What the Linux port changes
 
-- Native Electron launch with XWayland by default; optional native Wayland through `TLI_OZONE_PLATFORM=wayland`.
-- Steam log discovery instead of Windows process inspection and PowerShell.
-- Read-only, incremental log collection starting at the end of the file, with complete UTF-8 lines, truncation and rotation handling.
-- Queued delivery while the renderer starts or reloads, and recovery of the selected log path when the original worker restarts.
-- A narrow compatibility adjustment to the original frontend's existing desktop log-path getter.
-- Windows self-updating disabled, arbitrary shell-command execution blocked, and a local connection-error page with manual retry.
-- Shared IPC sender/frame checks and navigation guards for all application windows; no local WebSocket listener.
-- Per-chunk flow control while the interface is unavailable, private temporary exports, and clean shutdown of secondary windows.
+- Runs the Electron backend natively instead of using the Windows executable.
+- Replaces Windows process discovery and PowerShell with Steam metadata and native file selection.
+- Collects new log entries from EOF, preserving complete UTF-8 lines and handling truncation and rotation.
+- Pauses reads until queued data reaches the interface, preserving ordering across startup and reloads.
+- Adapts the original frontend's existing log-path getter so its worker can restart collection on desktop Linux.
+- Disables the Windows updater and arbitrary shell execution, validates IPC senders, and guards main/secondary-window navigation.
+- Uses private temporary files and closes secondary windows when application exit is confirmed.
 
-The web interface can restart collection only for a path selected natively through Steam discovery, `--log`/`TLI_LOG_PATH`, or **Ctrl+O**. To change the path, use one of those native entry points.
+The game installation, configuration and process are not modified.
 
-Full configuration and verification details: [Linux README](linux/README.md).
+## Configuration
 
-## Privacy and repository contents
+| Variable | Purpose |
+| --- | --- |
+| `TLI_ELECTRON` | Linux Electron executable path/name |
+| `TLI_LOG_PATH` | Explicit game-log path |
+| `TLI_USER_DATA_DIR` | Application-data directory; defaults to Electron user data for `etor-linux` |
+| `TLI_OZONE_PLATFORM` | `x11` by default for XWayland; `wayland` selects native Wayland |
+| `TLI_DEBUG=1` | Diagnostic output; does not replay old log entries |
 
-- Game logs, saves, Steam account data, Electron profiles, cookies and credentials are not included in the source distribution.
-- Machine-specific desktop launchers, downloaded Windows releases, local configuration, logs and build archives are excluded from Git.
-- Published analysis uses relative paths and excludes personal gameplay statistics. Test records contain synthetic data.
-- The original OS-info bridge preserves its API shape but returns empty username and home-directory fields.
-- The source archive normalizes file ownership so archive metadata does not contain the packager's local account name.
+## Privacy and limitations
 
-The application still executes the author's online UI. That UI receives new log lines and the selected log path through the original local bridge. Repository cleanup does not establish what the remote service stores or transmits; its current network behavior has not been audited.
+Game logs, saves, Steam account data, profiles, credentials and machine-specific desktop entries are excluded from Git. The OS-info API returns empty username and home-directory fields. Internal research and local verification files are not part of the published source tree.
 
-## Verification and limitations
+During use, the author's UI receives new log lines and the selected path through the local bridge. Its current network behavior and server-side storage have not been audited. The live upstream UI, a real gameplay session, and Hyprland overlay positioning/click-through remain unverified.
 
-```bash
-npm test
-npm run test:electron
-```
-
-Verification includes 36 unit cases and native Electron 43.7.11 smoke tests against synthetic logs and a loopback HTTP fixture, including identity redaction, safe preload APIs, guarded secondary windows and confirmed-exit cleanup. The live upstream UI, a real gameplay session, and Hyprland overlay positioning/click-through remain unverified. See [verification evidence](docs/evidence/linux-verification.json) and the [code review](docs/code-review.md) for the tested scope and resolved findings.
-
-The online service remains an external dependency. This port does not grant additional rights to the original application; original credits and provenance are retained in [NOTICE](linux/NOTICE.md).
+Original attribution, provenance and licensing information: [NOTICE](linux/NOTICE.md). No additional license grant is asserted for upstream-owned code.
 
 ---
 

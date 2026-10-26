@@ -22,3 +22,8 @@ node_modules/
 *.core
 core
 .DS_Store
+/docs/
+/test/
+/tests/
+/CONTEXT.md
+/linux/README.md

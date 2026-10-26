@@ -3,8 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "start": "./run-linux.sh",
-    "test": "node --test --test-isolation=none test/*.test.cjs",
-    "test:electron": "./test/electron-xvfb.sh --no-sandbox --disable-gpu --ozone-platform=x11 test/electron-smoke.cjs"
+    "start": "./run-linux.sh"
   }
 }
