@@ -1,7 +1,16 @@
 // preload.js
 const { contextBridge, ipcRenderer } = require('electron');
 
-contextBridge.exposeInMainWorld('electronAPI', {
+function subscribe(channel, callback) {
+  if (typeof callback !== 'function') throw new TypeError('A callback is required');
+  ipcRenderer.on(channel, (_event, ...args) => callback(...args));
+}
+
+function unsubscribe(channel) {
+  ipcRenderer.removeAllListeners(channel);
+}
+
+if (process.isMainFrame) contextBridge.exposeInMainWorld('electronAPI', {
   getOSInfo: () => ipcRenderer.invoke('get-os-info'),
   openFileDialog: () => ipcRenderer.invoke('open-file-dialog'),
   runShellCommand: (cmd) => ipcRenderer.invoke('run-shell-command', cmd),
@@ -13,10 +22,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTorStatus: () => ipcRenderer.invoke('get-tor-status'),
   getGameLogPath: () => ipcRenderer.invoke('get-native-log-path'),
   onLogMsg: (callback) => {
-    ipcRenderer.on('tor-log-msg', (event, msg) => callback(msg));
+    subscribe('tor-log-msg', callback);
     ipcRenderer.send('log-consumer-ready');
   },
-  offLogMsg: () => ipcRenderer.removeAllListeners('tor-log-msg'),
+  offLogMsg: () => unsubscribe('tor-log-msg'),
 
   //获取当前窗口xy 长宽
   getWindowBounds: () => ipcRenderer.invoke('get-window-bounds'),
@@ -41,18 +50,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleFullscreen: () => ipcRenderer.invoke('toggle-fullscreen'),
 
   // 持久化相关
-  onBeforeQuit: (callback) => ipcRenderer.on('before-quit', (event, data) => callback(data)),
-  onWindowClose: (callback) => ipcRenderer.on('window-close', (event, data) => callback(data)),
-  offBeforeQuit: () => ipcRenderer.removeAllListeners('before-quit'),
-  offWindowClose: () => ipcRenderer.removeAllListeners('window-close'),
-  onWindowMaximize: (callback) => ipcRenderer.on('window-maximize', () => callback()),
-  onWindowUnmaximize: (callback) => ipcRenderer.on('window-unmaximize', () => callback()),
-  offWindowMaximize: () => ipcRenderer.removeAllListeners('window-maximize'),
-  offWindowUnmaximize: () => ipcRenderer.removeAllListeners('window-unmaximize'),
+  onBeforeQuit: (callback) => subscribe('before-quit', callback),
+  onWindowClose: (callback) => subscribe('window-close', callback),
+  offBeforeQuit: () => unsubscribe('before-quit'),
+  offWindowClose: () => unsubscribe('window-close'),
+  onWindowMaximize: (callback) => subscribe('window-maximize', callback),
+  onWindowUnmaximize: (callback) => subscribe('window-unmaximize', callback),
+  offWindowMaximize: () => unsubscribe('window-maximize'),
+  offWindowUnmaximize: () => unsubscribe('window-unmaximize'),
 
   // 示例：监听事件（比如主进程通知设备插入）
-  onDeviceChange: (callback) => ipcRenderer.on('device-change', (event, info) => callback(info)),
-  offDeviceChange: () => ipcRenderer.removeAllListeners('device-change'),
+  onDeviceChange: (callback) => subscribe('device-change', callback),
+  offDeviceChange: () => unsubscribe('device-change'),
 
   getWssPort: () => ipcRenderer.invoke('get-wss-port'),
 
@@ -63,7 +72,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onLogBatch: (callback) => {
     // 移除旧的监听器，防止重复注册
     ipcRenderer.removeAllListeners('ipc-log-batch');
-    ipcRenderer.on('ipc-log-batch', (event, payload) => callback(payload));
+    subscribe('ipc-log-batch', callback);
   },
 
   /**

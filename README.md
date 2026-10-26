@@ -1,6 +1,6 @@
 # Torchlight Tracker
 
-Native Linux adaptation of **YiHuo ETor**, based on [Giboork's English translation](https://github.com/Giboork/TLI-tracker-translated), release v1.3.0. This is an independent personal-use derivative; it is not an official project or a GitHub fork-network repository.
+Experimental native Linux adaptation of **YiHuo ETor**, based on [Giboork's English translation](https://github.com/Giboork/TLI-tracker-translated), release v1.3.0. This is an independent, unofficial project, separate from the upstream GitHub fork network.
 
 The original interface, game-message parser, translations and calculations are preserved. The interface still loads from the original author's website, so an internet connection and that service are required.
 
@@ -18,7 +18,7 @@ Steam libraries are discovered automatically, including additional library locat
 ./run-linux.sh --log '/path/to/UE_game.log'
 ```
 
-You can also select a log with **Ctrl+O**. No `npm install` is needed; the required `ws` dependency is bundled with its license.
+You can also select a log with **Ctrl+O**. No `npm install` is needed; the application uses Electron and Node's built-in modules.
 
 ## Desktop launcher
 
@@ -36,6 +36,10 @@ On Omarchy, press **Super+Space** and search for **Torchlight Tracker**. The ins
 - Queued delivery while the renderer starts or reloads, and recovery of the selected log path when the original worker restarts.
 - A narrow compatibility adjustment to the original frontend's existing desktop log-path getter.
 - Windows self-updating disabled, arbitrary shell-command execution blocked, and a local connection-error page with manual retry.
+- Shared IPC sender/frame checks and navigation guards for all application windows; no local WebSocket listener.
+- Per-chunk flow control while the interface is unavailable, private temporary exports, and clean shutdown of secondary windows.
+
+The web interface can restart collection only for a path selected natively through Steam discovery, `--log`/`TLI_LOG_PATH`, or **Ctrl+O**. To change the path, use one of those native entry points.
 
 Full configuration and verification details: [Linux README](linux/README.md).
 
@@ -56,7 +60,7 @@ npm test
 npm run test:electron
 ```
 
-The existing verification includes 25 unit cases and native Electron 43.7.11 smoke tests against synthetic logs and a loopback HTTP fixture. The live upstream UI, a real gameplay session, and Hyprland overlay positioning/click-through remain unverified. See [verification evidence](docs/evidence/linux-verification.json) for the scope of the recorded runs. The smoke test also checks OS-info identity redaction when rerun.
+Verification includes 36 unit cases and native Electron 43.7.11 smoke tests against synthetic logs and a loopback HTTP fixture, including identity redaction, safe preload APIs, guarded secondary windows and confirmed-exit cleanup. The live upstream UI, a real gameplay session, and Hyprland overlay positioning/click-through remain unverified. See [verification evidence](docs/evidence/linux-verification.json) and the [code review](docs/code-review.md) for the tested scope and resolved findings.
 
 The online service remains an external dependency. This port does not grant additional rights to the original application; original credits and provenance are retained in [NOTICE](linux/NOTICE.md).
 

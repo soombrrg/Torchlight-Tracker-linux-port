@@ -3,8 +3,5 @@
   "version": "1.0.5",
   "description": "Linux port of YiHuo ETor, English translation v1.3.0",
   "main": "main.js",
-  "private": true,
-  "dependencies": {
-    "ws": "8.18.3"
-  }
+  "private": true
 }

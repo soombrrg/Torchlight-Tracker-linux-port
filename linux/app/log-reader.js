@@ -146,6 +146,7 @@ async function readChanges(session) {
   session.isReading = true;
   session.readAgain = false;
   try {
+    if (!session.canReadMore) return;
     watchDirectory(session);
     const pathStats = await statPath(session.logPath);
     if (!isCurrent(session)) return;
@@ -262,6 +263,10 @@ function notifyCanReadMore() {
   scheduleRead(current);
 }
 
+function pauseReading() {
+  if (current) current.canReadMore = false;
+}
+
 function resetFlowControl() {
   notifyCanReadMore();
 }
@@ -277,6 +282,7 @@ module.exports = {
   stopTorLog,
   getStatus,
   notifyCanReadMore,
+  pauseReading,
   resetFlowControl,
   updateCallback,
 };

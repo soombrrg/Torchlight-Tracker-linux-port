@@ -17,9 +17,6 @@
 /.local/
 /linux/torchlight-tracker.desktop
 node_modules/
-!/linux/app/node_modules/
-/linux/app/node_modules/*
-!/linux/app/node_modules/ws/
 *.log
 *.log.*
 *.core

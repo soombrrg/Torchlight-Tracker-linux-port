@@ -5,7 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const http = require('node:http');
 const { setTimeout: delay } = require('node:timers/promises');
-const { app } = require('electron');
+const { app, BrowserWindow, dialog } = require('electron');
 const connectionErrorMode = process.argv.includes('--connection-error');
 
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'etor-linux-smoke-'));
@@ -63,6 +63,7 @@ async function waitFor(predicate) {
 let windowCount = 0;
 app.on('browser-window-created', (_event, window) => {
   windowCount++;
+  if (windowCount > 1) return;
   fs.appendFileSync(logPath, 'queued before renderer ready\n');
   if (connectionErrorMode) {
     let checking = false;
@@ -100,9 +101,30 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(osInfo.platform, 'linux');
       assert.equal(osInfo.username, '');
       assert.equal(osInfo.homedir, '');
+      assert.equal(await evaluate('window.electronAPI.getWssPort()'), null);
+      assert.equal(await evaluate(`(() => {
+        const api = window.electronAPI;
+        return [api.onBeforeQuit(() => {}), api.onWindowClose(() => {}),
+          api.onWindowMaximize(() => {}), api.onWindowUnmaximize(() => {}),
+          api.onDeviceChange(() => {}), api.offBeforeQuit(), api.offWindowClose(),
+          api.offDeviceChange(), api.offWindowMaximize(), api.offWindowUnmaximize()]
+          .every((value) => value === undefined);
+      })()`), true);
       assert.equal(await evaluate('window.electronAPI.getWindowId()'), window.id);
       assert.equal(window.webContents.getLastWebPreferences().contextIsolation, true);
       assert.equal(window.webContents.getLastWebPreferences().nodeIntegration, false);
+
+      const childInfo = await evaluate('window.electronAPI.openWindow({url: location.origin + "/", width: 400, height: 300})');
+      const child = BrowserWindow.getAllWindows().find((candidate) => candidate.webContents.id === childInfo.id);
+      assert.ok(child);
+      assert.equal(child.webContents.getLastWebPreferences().sandbox, true);
+      const navigation = new Promise((resolve) => {
+        child.webContents.once('will-navigate', (event) => resolve(event.defaultPrevented));
+      });
+      await child.webContents.executeJavaScript('location.href = "http://127.0.0.1:9/blocked"; void 0');
+      assert.equal(await navigation, true);
+      assert.equal(new URL(child.webContents.getURL()).origin, new URL(process.env.TLI_RENDERER_URL).origin);
+      child.destroy();
 
       const lines = Array.from({ length: 1205 }, (_, index) => `fixture-line-${index}`);
       fs.appendFileSync(logPath, `${lines.join('\n')}\n`);
@@ -134,9 +156,12 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(fs.existsSync(forbidden), false);
 
       await assert.rejects(evaluate(`window.electronAPI.startTorLog(${JSON.stringify(path.join(temporary, 'missing.log'))})`));
-      const stopped = await evaluate('window.electronAPI.getTorStatus()');
-      assert.equal(stopped.isRunning, false);
-      assert.equal(stopped.isLoggingActive, false);
+      const stillRunning = await evaluate('window.electronAPI.getTorStatus()');
+      assert.equal(stillRunning.isRunning, true);
+      assert.equal(stillRunning.currentLogPath, logPath);
+      const unauthorized = path.join(temporary, 'not-selected.log');
+      fs.writeFileSync(unauthorized, 'private fixture\n');
+      await assert.rejects(evaluate(`window.electronAPI.startTorLog(${JSON.stringify(unauthorized)})`), /Ctrl\+O/);
       await evaluate(`window.electronAPI.startTorLog(${JSON.stringify(logPath)})`);
       const restarted = await evaluate('window.electronAPI.getTorStatus()');
       assert.equal(restarted.isRunning, true);
@@ -144,6 +169,17 @@ app.on('browser-window-created', (_event, window) => {
 
       await evaluate('window.electronAPI.stopTorLog()');
       assert.equal((await evaluate('window.electronAPI.getTorStatus()')).isRunning, false);
+      await evaluate('window.electronAPI.openWindow({url: location.origin + "/", width: 400, height: 300})');
+      assert.equal(BrowserWindow.getAllWindows().length, 2);
+      app.removeAllListeners('window-all-closed');
+      const originalShowMessageBox = dialog.showMessageBox;
+      dialog.showMessageBox = async () => ({ response: 0 });
+      window.close();
+      await waitFor(() => window.isDestroyed());
+      dialog.showMessageBox = originalShowMessageBox;
+      assert.equal(BrowserWindow.getAllWindows().length, 0);
+      assert.doesNotThrow(() => app.emit('browser-window-focus'));
+      assert.doesNotThrow(() => app.emit('browser-window-blur'));
       finish(null, {
         electron: process.versions.electron,
         node: process.versions.node,
@@ -158,12 +194,16 @@ app.on('browser-window-created', (_event, window) => {
           queued_before_renderer_ready: true,
           original_backend_version: true,
           os_info_identity_redacted: true,
+          loopback_transport_disabled: true,
+          preload_listener_returns_safe: true,
+          secondary_window_navigation_guarded: true,
+          confirmed_exit_closes_secondary_windows: true,
           ipc_lines_in_order: lines.length,
           utf8_partial_line: true,
           renderer_reload: true,
           original_worker_path_recovery: true,
           shell_execution_disabled: true,
-          bad_path_rejects_with_truthful_status: true,
+          invalid_or_unselected_path_preserves_active_reader: true,
           restart: true,
           stop: true,
         },

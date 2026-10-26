@@ -60,6 +60,24 @@ test('starts at EOF, preserves the exclusion filter, and delivers CRLF/empty lin
   assert.deepEqual(lines, ['new предмет 🔥', '', 'last line']);
 });
 
+test('consumer pause also stops small EOF appends until the queued chunk is acknowledged', async (t) => {
+  const { logPath } = await fixture(t);
+  const lines = [];
+  await reader.mainWatch(logPath, (line) => {
+    reader.pauseReading();
+    lines.push(line);
+  });
+  await fs.appendFile(logPath, 'first\n');
+  await waitFor(() => lines.length === 1, 'first small append');
+  const position = reader.getStatus().lastPosition;
+  await fs.appendFile(logPath, 'queued on disk\n'.repeat(1000));
+  await delay(350);
+  assert.equal(reader.getStatus().lastPosition, position);
+  assert.deepEqual(lines, ['first']);
+  reader.notifyCanReadMore();
+  await waitFor(() => lines.length === 1001, 'resumed small append');
+});
+
 test('an inherited development environment cannot replay the existing log', async (t) => {
   const { logPath } = await fixture(t, 'existing history\n'.repeat(10000));
   const previous = process.env.NODE_ENV;

@@ -4,10 +4,6 @@ const isDev = process.env.TLI_DEBUG === '1';
 
 // 非开发环境屏蔽 console.log，但保留 console.error 和 console.warn
 if (!isDev) {
-  const originalLog = console.log;
-  const originalInfo = console.info;
-  const originalDebug = console.debug;
-
   console.log = () => {};
   console.info = () => {};
   console.debug = () => {};
@@ -16,7 +12,7 @@ if (!isDev) {
   // console.warn 和 console.error 保持不变，用于错误和警告信息
 }
 
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, protocol, net } = require('electron');
+const { app, BrowserWindow, ipcMain: nativeIpcMain, dialog, shell, Menu, protocol, net, session } = require('electron');
 
 const os = require('os');
 const fs = require('fs').promises;
@@ -26,7 +22,9 @@ const tor = require('./log-reader');
 const { resolveLogPath } = require('./linux-paths');
 const { installRendererCompatibility } = require('./renderer-compat');
 const packageJson = require('./package.json');
-const wss = require('ws');
+const { createSecurityPolicy } = require('./security');
+const { saveTemporaryFile } = require('./safe-temp');
+const { windowBounds } = require('./window-options');
 
 app.setName('etor-linux');
 if (process.env.TLI_USER_DATA_DIR) {
@@ -34,10 +32,11 @@ if (process.env.TLI_USER_DATA_DIR) {
 }
 const rendererURL = process.env.TLI_RENDERER_URL || 'https://etor-beta.710421059.xyz/';
 const errorPageURL = pathToFileURL(path.join(__dirname, 'connection-error.html')).href;
-const rendererOrigin = new URL(rendererURL).origin;
+const security = createSecurityPolicy({ ipcMain: nativeIpcMain, rendererURL, errorPageURL, openExternalURL });
+const ipcMain = security.ipcMain;
 
 let mainWindow;
-let mainWindowRestoreBounds = null;
+const restoreBounds = new WeakMap();
 let isLoggingActive = false;
 let currentLogPath = '';
 let preferredLogPath = '';
@@ -45,28 +44,17 @@ let logConsumerReady = false;
 let startupError = null;
 let logOperation = Promise.resolve();
 
-let wssServer = null;
-let wssPort = null;
-
 // IPC 消息发送节流机制
 let ipcMessageQueue = [];
 const ipcBatchSize = isDev ? 3000 : 1000; // 每批发送的消息数量
 const ipcBatchInterval = 100; // 批量发送间隔（毫秒）
 let isProcessingIpc = false; // <--- 使用一个更清晰的标志
 
-// WebSocket 消息队列
-let wssMessageQueue = [];
-let isWaitingForBatchConfirm = false; // 是否正在等待批次确认
-let pendingBatchId = null; // 当前等待确认的批次 ID
-let pendingBatchCount = 0;
-const wssBatchSize = isDev ? 3000 : 1000; // 每批发送的消息数量
-let wssFallbackTimer = null; // WSS 确认兜底定时器（1s）
-
 async function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 720,
-    title: 'YiHuo ETor — Linux',
+    title: 'Torchlight Tracker',
     icon: path.join(__dirname, 'etor.png'),
     // minWidth: 800,
     // minHeight: 600,
@@ -89,40 +77,7 @@ async function createWindow() {
   mainWindow.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => {
     if (mainFrame && !inPlace) logConsumerReady = false;
   });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    openExternalURL(url).catch((error) => console.error(error.message));
-    return { action: 'deny' };
-  });
-
-  // Dev tools disabled for production
-  // mainWindow.webContents.openDevTools();
-
-  // Secret dev tools shortcut: press 0 fifteen times
-  let zeroKeyPressCount = 0;
-  let zeroKeyResetTimer = null;
-
-  mainWindow.webContents.on('before-input-event', (event, input) => {
-    if (input.type === 'keyDown' && input.key === '0') {
-      zeroKeyPressCount++;
-
-      // Clear existing timer and set new one
-      if (zeroKeyResetTimer) {
-        clearTimeout(zeroKeyResetTimer);
-      }
-
-      // Reset counter after 2 seconds of no presses
-      zeroKeyResetTimer = setTimeout(() => {
-        zeroKeyPressCount = 0;
-      }, 2000);
-
-      // Open dev tools on 15th press
-      if (zeroKeyPressCount >= 15) {
-        mainWindow.webContents.openDevTools();
-        zeroKeyPressCount = 0;
-        clearTimeout(zeroKeyResetTimer);
-      }
-    }
-  });
+  security.protectWindow(mainWindow);
 
   // Just keep injecting constantly - brute force approach
   let translateScript = null;
@@ -216,11 +171,11 @@ async function createWindow() {
       event.preventDefault();
     }
   });
-  mainWindowRestoreBounds = mainWindow.getBounds();
+  restoreBounds.set(mainWindow, mainWindow.getBounds());
 
   mainWindow.on('maximize', () => {
     if (typeof mainWindow.getNormalBounds === 'function') {
-      mainWindowRestoreBounds = mainWindow.getNormalBounds();
+      restoreBounds.set(mainWindow, mainWindow.getNormalBounds());
     }
     mainWindow.webContents.send('window-maximize');
   });
@@ -254,54 +209,28 @@ async function createWindow() {
       } catch (error) {
         console.error('发送 window-close 事件失败:', error);
       } finally {
-        // 无论保存成功与否，都关闭窗口
+        // Overlays are part of this application and must not outlive its main window.
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (window !== mainWindow && !window.isDestroyed()) window.destroy();
+        }
         mainWindow.destroy();
       }
     }
     // 如果用户点击了"取消"，什么都不做，窗口保持打开
   });
 
-  // 🔒 安全：防止跳转到非法网站
-  mainWindow.webContents.on('will-navigate', (event, newURL) => {
-    if (new URL(newURL).origin !== rendererOrigin && !newURL.startsWith(errorPageURL)) {
-      event.preventDefault();
-      openExternalURL(newURL).catch((error) => console.error(error.message));
-    }
-  });
-
   // 设置窗口选项
   ipcMain.on('set-window-options', (event, options) => {
-    console.log('收到窗口选项设置请求:', options);
-
-    // 获取当前窗口位置，保持位置不变
-    const currentBounds = mainWindow.getBounds();
-    console.log('当前窗口大小:', currentBounds);
-
-    // 设置新的窗口大小
-    mainWindow.setBounds({
-      // x: currentBounds.x,
-      // y: currentBounds.y,
-      x: options.x ? options.x : currentBounds.x,
-      y: options.y ? options.y : currentBounds.y,
-      width: options.width,
-      height: options.height,
-    });
-
-    // 验证设置是否成功
-    const newBounds = mainWindow.getBounds();
-    console.log('设置后窗口大小:', newBounds);
-
-    if (options.autoHideMenuBar !== undefined) {
-      mainWindow.setAutoHideMenuBar(options.autoHideMenuBar);
-    }
-    if (options.resizable !== undefined) {
-      mainWindow.setResizable(options.resizable);
-    }
-    if (options.maximizable !== undefined) {
-      mainWindow.setMaximizable(options.maximizable);
-    }
-    if (options.alwaysOnTop !== undefined) {
-      mainWindow.setAlwaysOnTop(options.alwaysOnTop, 'screen-saver');
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    win.setBounds(windowBounds(options, win.getBounds()));
+    for (const [option, setter] of [
+      ['autoHideMenuBar', 'setAutoHideMenuBar'],
+      ['resizable', 'setResizable'],
+      ['maximizable', 'setMaximizable'],
+      ['alwaysOnTop', 'setAlwaysOnTop'],
+    ]) {
+      if (typeof options[option] === 'boolean') win[setter](options[option]);
     }
   });
 
@@ -315,8 +244,8 @@ async function createWindow() {
     }
   });
 
-  ipcMain.handle('get-window-bounds', () => {
-    const currentBounds = mainWindow.getBounds();
+  ipcMain.handle('get-window-bounds', (event) => {
+    const currentBounds = BrowserWindow.fromWebContents(event.sender).getBounds();
     return {
       x: currentBounds.x || 0,
       y: currentBounds.y || 0,
@@ -379,11 +308,13 @@ async function createWindow() {
 
   // 处理应用焦点事件
   app.on('browser-window-focus', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     console.log('应用获得焦点');
     mainWindow.webContents.send('app-focus');
   });
 
   app.on('browser-window-blur', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
     console.log('应用失去焦点');
     mainWindow.webContents.send('app-blur');
   });
@@ -427,10 +358,6 @@ function startLog(logPath) {
     isLoggingActive = false;
     currentLogPath = '';
     ipcMessageQueue = [];
-    wssMessageQueue = [];
-    clearTimeout(wssFallbackTimer);
-    isWaitingForBatchConfirm = false;
-    pendingBatchId = null;
     await tor.mainWatch(logPath, routeLogMessage);
     isLoggingActive = tor.getStatus().isRunning;
     currentLogPath = tor.getStatus().logPath;
@@ -441,8 +368,6 @@ function startLog(logPath) {
   return operation;
 }
 
-let wsClient = null;
-
 function maybeNotifyCanReadMore() {
   try {
     if (tor && typeof tor.notifyCanReadMore === 'function') {
@@ -451,177 +376,12 @@ function maybeNotifyCanReadMore() {
   } catch (_) {}
 }
 
-function createWebSocketServer() {
-  ipcMain.handle('get-wss-port', () => wssPort);
-  return new Promise((resolve) => {
-    wssServer = new wss.Server({ host: '127.0.0.1', port: 0 });
-    wssServer.once('listening', () => {
-      wssPort = wssServer.address().port;
-      resolve();
-    });
-    wssServer.on('error', (error) => {
-      console.error('[Linux] WebSocket unavailable; using IPC:', error.message);
-      wssPort = null;
-      resolve();
-    });
-    wssServer.on('connection', (ws) => {
-      wsClient = ws;
-      console.log('一个新的客户端已连接');
-
-      // =========================================================
-      // 关键：从 IPC 队列迁移消息到 WSS 队列，保证顺序
-      // =========================================================
-      if (ipcMessageQueue.length > 0) {
-        console.log(`正在从 IPC 迁移 ${ipcMessageQueue.length} 条待处理消息到 WSS 队列...`);
-        // 使用 unshift 将旧消息放在队列最前面，优先处理
-        wssMessageQueue = wssMessageQueue.concat(ipcMessageQueue);
-        ipcMessageQueue = []; // 清空 IPC 队列
-      }
-
-      // 重置等待确认状态（新连接建立时）
-      isWaitingForBatchConfirm = false;
-      pendingBatchId = null;
-      pendingBatchCount = 0;
-
-      // 客户端连接后，立即开始处理 WSS 队列（可能包含刚迁移过来的消息）
-      processWssMessageQueue();
-
-      // 如果日志正在运行，确保流控状态被重置
-      if (isLoggingActive) {
-        if (tor.resetFlowControl) tor.resetFlowControl();
-      }
-
-      wsClient.on('message', (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-
-          if (message.type === 'BATCH_PROCESSED') {
-            if (isWaitingForBatchConfirm && message.batchId === pendingBatchId) {
-              console.log(`收到 Worker 确认，批次 ID: ${message.batchId}`);
-              isWaitingForBatchConfirm = false;
-              pendingBatchId = null;
-              pendingBatchCount = 0;
-              if (wssFallbackTimer) {
-                clearTimeout(wssFallbackTimer);
-                wssFallbackTimer = null;
-              }
-              // 无论队列是否低于水位，都通知一次，让日志读取按“批次节拍”前进
-              // 多次通知是幂等的，tor 端有 canReadMore/isReading 保护
-              if (wssMessageQueue.length < 1000) {
-                maybeNotifyCanReadMore();
-              }
-              // 收到确认后，立即处理下一批
-              processWssMessageQueue();
-            }
-          } else if (message.type === 'READY') {
-            console.log('Worker 已就绪，开始发送消息');
-            processWssMessageQueue(); // Worker就绪，也可以触发一次处理
-          }
-        } catch (error) {}
-      });
-
-      const handleDisconnect = (reason) => {
-        console.log(`❌ WebSocket 客户端已断开 (${reason}). 回退到稳定的 IPC 通道.`);
-        wsClient = null;
-        isWaitingForBatchConfirm = false; // 重置状态
-
-        // =========================================================
-        // 关键：将 WSS 队列中未处理的消息迁移回 IPC 队列
-        // =========================================================
-        if (wssMessageQueue.length > 0) {
-          console.log(`正在从 WSS 迁移 ${wssMessageQueue.length} 条待处理消息到 IPC 队列...`);
-          // 使用 push 将它们放在IPC队列末尾，因为它们是新消息
-          // ipcMessageQueue.push(...wssMessageQueue);
-          ipcMessageQueue = ipcMessageQueue.concat(wssMessageQueue);
-          wssMessageQueue = [];
-          // 立即启动IPC处理
-          processIpcMessageQueue();
-        }
-      };
-
-      wsClient.on('close', () => handleDisconnect('close'));
-      wsClient.on('error', (error) => handleDisconnect(`error: ${error.message}`));
-    });
-  });
-
-}
-
-// 彻底重写 processWssMessageQueue 函数 (死锁修复)
-function processWssMessageQueue() {
-  if (
-    isWaitingForBatchConfirm ||
-    wssMessageQueue.length === 0 ||
-    !wsClient ||
-    wsClient.readyState !== wss.OPEN
-  ) {
-    return;
-  }
-
-  isWaitingForBatchConfirm = true;
-
-  try {
-    const batch = wssMessageQueue.splice(0, wssBatchSize);
-    if (batch.length === 0) {
-      isWaitingForBatchConfirm = false;
-      return;
-    }
-
-    const batchId = Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    pendingBatchId = batchId;
-    pendingBatchCount = batch.length;
-
-    const batchMessage = JSON.stringify({
-      type: 'BATCH',
-      batchId,
-      messages: batch,
-      count: batch.length,
-    });
-
-    console.log(
-      `[WSS发送] 发送批次 ${batchId}, 消息数: ${batch.length}, 队列剩余: ${wssMessageQueue.length}`,
-    );
-    wsClient.send(batchMessage);
-
-    // 1 秒确认兜底：若 1s 内未收到确认，则视为已处理，推动继续读取
-    if (wssFallbackTimer) clearTimeout(wssFallbackTimer);
-    wssFallbackTimer = setTimeout(() => {
-      if (isWaitingForBatchConfirm && pendingBatchId === batchId) {
-        console.warn(`批次 ${batchId} 1s 未确认，兜底触发继续读取`);
-        isWaitingForBatchConfirm = false;
-        pendingBatchId = null;
-        pendingBatchCount = 0;
-        // 通知日志端继续读取
-        if (wssMessageQueue.length < 1000) {
-          maybeNotifyCanReadMore();
-        }
-        // 继续处理队列
-        processWssMessageQueue();
-      }
-    }, 1000);
-  } catch (error) {
-    console.error('处理并发送WebSocket消息失败:', error);
-    isWaitingForBatchConfirm = false;
-  }
-}
-
-// ===================================================================
-// 日志路由和 IPC 处理
-// ===================================================================
-
-// 这是唯一的日志入口函数，它决定消息的去向
-function routeLogMessage(msg) {
-  // 优先使用 WSS 通道
-  if (wsClient && wsClient.readyState === wss.OPEN) {
-    wssMessageQueue.push(msg);
-    processWssMessageQueue();
-  } else {
-    // WSS 不可用时，回退到 IPC
-    ipcMessageQueue.push(msg);
-    // 关键：如果当前没有正在处理的循环，就启动一个
-    if (!isProcessingIpc) {
-      processIpcMessageQueue();
-    }
-  }
+// The supplied desktop UI consumes IPC. No loopback listener is needed.
+function routeLogMessage(message) {
+  // Hold further reads until this chunk drains, including small EOF appends.
+  tor.pauseReading();
+  ipcMessageQueue.push(message);
+  processIpcMessageQueue();
 }
 
 // 批量处理 IPC 消息队列 (这个函数基本不变)
@@ -688,7 +448,9 @@ function processIpcMessageQueue() {
 app.whenReady().then(async () => {
   await fs.mkdir(app.getPath('userData'), { recursive: true });
   installRendererCompatibility({ protocol, net, rendererURL });
-  await createWebSocketServer();
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+  session.defaultSession.setPermissionCheckHandler(() => false);
+  ipcMain.handle('get-wss-port', () => null);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -696,8 +458,13 @@ app.whenReady().then(async () => {
 
   // tor日志相关
   ipcMain.handle('start-tor-log', async (event, options) => {
-    const { logPath } = options;
-    await startLog(logPath);
+    const { logPath } = options || {};
+    if (typeof logPath !== 'string') throw new TypeError('A game-log path is required');
+    const canonicalPath = await fs.realpath(logPath);
+    if (canonicalPath !== preferredLogPath) {
+      throw new Error('Select the game log with Ctrl+O or --log before starting it');
+    }
+    await startLog(canonicalPath);
     return tor.getStatus();
   });
 
@@ -707,7 +474,6 @@ app.whenReady().then(async () => {
       isLoggingActive = false;
       currentLogPath = '';
       ipcMessageQueue = [];
-      wssMessageQueue = [];
     });
     await logOperation;
   });
@@ -732,8 +498,8 @@ app.whenReady().then(async () => {
 
   // 监听来自前端的“打开新窗口”请求
   ipcMain.handle('open-window', async (event, options) => {
-    const { url = rendererURL, ...winOpts } = options;
-    if (new URL(url).origin !== rendererOrigin) throw new Error('Unexpected window origin');
+    const { url = rendererURL, ...winOpts } = options || {};
+    if (!security.isRendererURL(url)) throw new Error('Unexpected window origin');
     const win = new BrowserWindow({
       width: winOpts.width,
       height: winOpts.height,
@@ -756,7 +522,14 @@ app.whenReady().then(async () => {
       },
     });
 
-    await win.loadURL(url);
+    security.protectWindow(win);
+    restoreBounds.set(win, win.getBounds());
+    try {
+      await win.loadURL(url);
+    } catch (error) {
+      win.destroy();
+      throw error;
+    }
 
     if (isDev) {
       win.webContents.openDevTools();
@@ -796,7 +569,7 @@ app.whenReady().then(async () => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       if (!win.isMaximized() && !win.isFullScreen()) {
-        mainWindowRestoreBounds = win.getBounds();
+        restoreBounds.set(win, win.getBounds());
       }
       win.maximize();
     }
@@ -816,13 +589,14 @@ app.whenReady().then(async () => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (win && !win.isDestroyed()) {
       const applyRestoreBounds = () => {
-        if (!mainWindowRestoreBounds) return;
+        const previous = restoreBounds.get(win);
+        if (!previous) return;
         const currentBounds = win.getBounds();
         win.setBounds({
           x: currentBounds.x,
           y: currentBounds.y,
-          width: mainWindowRestoreBounds.width,
-          height: mainWindowRestoreBounds.height,
+          width: previous.width,
+          height: previous.height,
         });
       };
       if (win.isFullScreen()) {
@@ -894,9 +668,6 @@ app.whenReady().then(async () => {
 
 app.on('will-quit', () => {
   tor.stopTorLog();
-  clearTimeout(wssFallbackTimer);
-  wssServer?.clients.forEach((client) => client.terminate());
-  wssServer?.close();
 });
 
 // 应用退出前事件
@@ -965,9 +736,8 @@ ipcMain.handle('run-shell-command', async (event, command) => {
 
 // 保存数据到临时文件
 ipcMain.handle('save-to-temp', async (event, data, filename = 'output.txt') => {
-  const filePath = path.join(os.tmpdir(), path.basename(filename));
   try {
-    await fs.writeFile(filePath, data);
+    const filePath = await saveTemporaryFile(data, filename);
     return { success: true, path: filePath };
   } catch (err) {
     return { success: false, error: err.message };
@@ -975,6 +745,5 @@ ipcMain.handle('save-to-temp', async (event, data, filename = 'output.txt') => {
 });
 
 module.exports = {
-  wssMessageQueue,
   ipcMessageQueue,
 };

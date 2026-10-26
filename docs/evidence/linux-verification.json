@@ -1,13 +1,13 @@
 {
-  "date": "2026-10-24",
+  "date": "2026-10-26",
   "source_asar_sha256": "5b908d0f3c0c6043ec9f0d781fdfbc66feb135a16b345e63a5ac61a8f5ef370c",
   "unit_tests": {
     "command": "npm test",
-    "passed": 25,
+    "passed": 36,
     "failed": 0
   },
   "native_smoke": {
-    "evidence_id": "ev_59e4c6722f5fa4b9ab5a3be37cd6c5646d2bf948e8eb0c179133c917cc182e05",
+    "evidence_id": "ev_e16d1658437917043dba854f370067e2c33e0239bdf72b7e87ac3ee9054753a2",
     "exit": {
       "code": 0,
       "signal": 0,
@@ -20,7 +20,7 @@
     "report": "linux-electron-smoke.json"
   },
   "connection_error": {
-    "evidence_id": "ev_2154a894dd4f0bceb31701beade5314967cdb4873b8266038660b5522c1839ea",
+    "evidence_id": "ev_d4e4366550fc8ebf9079035f89e24436ded6b2917ac87f3aff86c7b586116f01",
     "exit": {
       "code": 0,
       "signal": 0,
