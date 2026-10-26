@@ -1,0 +1,11 @@
+{
+  "electron": "43.7.11",
+  "local_missing_file_only": true,
+  "checks": {
+    "title": "YiHuo ETor — Connection",
+    "message": true,
+    "retry": true,
+    "close": true,
+    "bridge": true
+  }
+}

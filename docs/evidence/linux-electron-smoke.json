@@ -1,0 +1,23 @@
+{
+  "electron": "43.7.11",
+  "node": "24.21.0",
+  "platform": "linux",
+  "window_count": 1,
+  "renderer": "loopback HTTP fixture; upstream website and APIs were not contacted",
+  "game": "temporary synthetic log only; game installation and process were not touched",
+  "checks": {
+    "context_isolation": true,
+    "node_integration_disabled": true,
+    "automatic_log_start": true,
+    "queued_before_renderer_ready": true,
+    "original_backend_version": true,
+    "ipc_lines_in_order": 1205,
+    "utf8_partial_line": true,
+    "renderer_reload": true,
+    "original_worker_path_recovery": true,
+    "shell_execution_disabled": true,
+    "bad_path_rejects_with_truthful_status": true,
+    "restart": true,
+    "stop": true
+  }
+}

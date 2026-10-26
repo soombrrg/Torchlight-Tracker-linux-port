@@ -1,0 +1,27 @@
+# Original Windows distributions and generated local artifacts.
+/TLI-tracker-translated-v*/
+/TLI-tracker-translated-v*.zip
+/.runtime/
+/dist/
+# Machine-local configuration, credentials and generated desktop launchers.
+/.agents/
+/.aws/
+/.codex/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+/.local/
+/linux/torchlight-tracker.desktop
+node_modules/
+!/linux/app/node_modules/
+/linux/app/node_modules/*
+!/linux/app/node_modules/ws/
+*.log
+*.log.*
+*.core
+core
+.DS_Store

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>YiHuo ETor — Connection</title>
+  <style>
+    :root { color-scheme: dark; font: 16px/1.6 system-ui, sans-serif; }
+    body { margin: 0; background: #181b24; color: #e8eaf0; min-height: 100vh; display: grid; place-items: center; -webkit-app-region: drag; }
+    main { max-width: 580px; padding: 48px; }
+    h1 { font-size: 26px; }
+    p { color: #b5bacb; }
+    button { padding: 12px 22px; border: 0; border-radius: 8px; font: inherit; background: #c9a46b; color: #181b24; cursor: pointer; -webkit-app-region: no-drag; }
+    button:focus-visible { outline: 3px solid white; outline-offset: 4px; }
+    button:disabled { opacity: .5; cursor: wait; }
+    #site { overflow-wrap: anywhere; }
+  </style>
+  <main>
+    <h1>Cannot reach the original ETor interface</h1>
+    <p>This application loads its interface from the author's website. Check your connection and try again.</p>
+    <p id="site"></p>
+    <button id="retry" type="button">Try again</button>
+    <button id="close" type="button">Close</button>
+  </main>
+  <script src="connection-error.js"></script>
+</html>
